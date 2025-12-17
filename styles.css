@@ -1,0 +1,68 @@
+/* Style Definition 1: General Body & Background */
+body {
+    background-color: #6F263D; /* Cleveland Wine */
+    /* Placeholder for stylish goats - add URL inside quotes if you find one */
+    background-image: url('https://img.freepik.com/premium-photo/goat-head-mascot-logo-esports-gaming_1000355-1498.jpg'); 
+    background-blend-mode: multiply;
+    background-size: 300px;
+    color: #ffffff;
+    font-family: 'Courier Prime', monospace; /* Movie Script Font */
+    margin: 0;
+    padding: 0;
+}
+
+/* Style Definition 2: Main Layout Container (Div 1) */
+.content-wrapper {
+    max-width: 1000px;
+    margin: 40px auto;
+    background-color: rgba(0, 0, 0, 0.85); /* Dark overlay to read text */
+    padding: 40px;
+    border: 2px solid #FFB81C; /* Cleveland Gold */
+    box-shadow: 0 0 20px rgba(0,0,0,0.5);
+}
+
+/* Style Definition 3: Typography */
+h1, h2, h3 {
+    color: #FFB81C; /* Cleveland Gold */
+    text-transform: uppercase;
+    text-align: center;
+}
+
+h1 { font-size: 3.5rem; letter-spacing: 5px; margin-bottom: 0; }
+h2 { font-size: 1.5rem; margin-top: 10px; border-bottom: 1px solid #FFB81C; padding-bottom: 20px; }
+
+/* Style Definition 4: Navigation (Div 2) */
+.nav-container {
+    background-color: #000;
+    padding: 15px;
+    text-align: center;
+    border-bottom: 3px solid #FFB81C;
+}
+
+.nav-btn {
+    color: #fff;
+    text-decoration: none;
+    margin: 0 20px;
+    font-size: 1.2rem;
+    font-weight: bold;
+    transition: color 0.3s;
+}
+
+.nav-btn:hover {
+    color: #FFB81C;
+}
+
+/* Style Definition 5: Tableau Container (Div 3) */
+.tableau-section {
+    margin-top: 50px;
+    padding-top: 20px;
+    border-top: 1px dashed #FFB81C;
+    text-align: center;
+}
+
+/* List Styling */
+ul { font-size: 1.1rem; line-height: 1.6; }
+ol { color: #ccc; }
+
+.media-section { text-align: center; margin: 30px 0; }
+footer { text-align: center; padding: 20px; font-size: 0.8rem; color: #aaa; }

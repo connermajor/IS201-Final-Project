@@ -1,0 +1,619 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gothic Rain Simulator</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #050505; font-family: 'Courier New', Courier, monospace; }
+        #blocker {
+            position: absolute; width: 100%; height: 100%;
+            background-color: rgba(0,0,0,0.8);
+            display: flex; flex-direction: column;
+            justify-content: center; align-items: center;
+            color: #ccc; z-index: 10;
+            transition: background-color 0.5s;
+        }
+        #instructions { cursor: pointer; text-align: center; }
+        #title { font-size: 3em; margin-bottom: 10px; text-transform: uppercase; letter-spacing: 5px; color: #888; }
+        #subtitle { font-size: 1em; color: #555; margin-bottom: 30px; }
+        #controls { font-size: 0.8em; color: #444; border: 1px solid #333; padding: 10px; }
+        canvas { display: block; }
+        
+        #return-link {
+            position: absolute; top: 10px; left: 10px; z-index: 100;
+            color: #555; text-decoration: none; font-size: 0.8em;
+            border: 1px solid #333; padding: 5px; background: rgba(0,0,0,0.5);
+        }
+        #return-link:hover { color: #ccc; border-color: #666; }
+    </style>
+</head>
+<body>
+
+    <a href="scratch.html" id="return-link">← Return to Project</a>
+
+    <div id="blocker">
+        <div id="instructions">
+            <div id="title">Velvet Rain</div>
+            <div id="subtitle">Procedural Gothic Ambience</div>
+            <p>Click to Enter</p>
+            <div id="controls">
+                WASD to Move<br>
+                MOUSE to Look<br>
+                Find the structure (appears after 73s)...
+            </div>
+        </div>
+    </div>
+
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.module.js",
+                "three/examples/": "https://cdn.jsdelivr.net/npm/three@0.128.0/examples/"
+            }
+        }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { PointerLockControls } from 'three/examples/jsm/controls/PointerLockControls.js';
+
+        // --- Configuration ---
+        const CONFIG = {
+            fogDensity: 0.025,
+            fogColor: 0x151515, 
+            rainCount: 15000,
+            worldSize: 2000,
+            churchTimer: 73, // 1m 13s
+        };
+
+        let camera, scene, renderer, controls;
+        let moveForward = false, moveBackward = false, moveLeft = false, moveRight = false;
+        let prevTime = performance.now();
+        const velocity = new THREE.Vector3();
+        const direction = new THREE.Vector3();
+        
+        // Game State
+        let churchSpawned = false;
+        let gameStartTime = 0;
+        let audioContext = null;
+        let lightningCounter = 0; 
+        let isRedLightning = false;
+        let nextLightningTime = 0; 
+        let churchObject = null;
+        
+        // Collisions
+        const treeColliders = []; // Stores position of every tree
+
+        // Environment Handles
+        let hemiLight, moonLight;
+        let flashIntensity = 0;
+        let rainSystem;
+
+        const defaultHemiColor = new THREE.Color(0x666677);
+        const defaultGroundColor = new THREE.Color(0x444444);
+        const defaultFogColor = new THREE.Color(CONFIG.fogColor);
+
+        init();
+        animate();
+
+        function init() {
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(CONFIG.fogColor);
+            scene.fog = new THREE.FogExp2(CONFIG.fogColor, CONFIG.fogDensity);
+
+            hemiLight = new THREE.HemisphereLight(defaultHemiColor, defaultGroundColor, 0.6); 
+            scene.add(hemiLight);
+
+            moonLight = new THREE.DirectionalLight(0xaaaaaa, 0.5); 
+            moonLight.position.set(50, 100, 50);
+            moonLight.castShadow = true;
+            scene.add(moonLight);
+
+            const moonGeo = new THREE.SphereGeometry(60, 64, 64);
+            const moonMat = new THREE.MeshBasicMaterial({ color: 0xeeffee, fog: false }); 
+            const moon = new THREE.Mesh(moonGeo, moonMat);
+            moon.position.set(200, 150, -400); 
+            scene.add(moon);
+
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.y = 2; 
+
+            controls = new PointerLockControls(camera, document.body);
+
+            const blocker = document.getElementById('blocker');
+            const instructions = document.getElementById('instructions');
+
+            instructions.addEventListener('click', function () {
+                if (churchSpawned && churchObject) {
+                    resetGame();
+                }
+                controls.lock();
+                initAudio(); 
+                if (gameStartTime === 0) {
+                    gameStartTime = performance.now() / 1000;
+                    nextLightningTime = gameStartTime + 5 + Math.random() * 5; 
+                }
+            });
+
+            controls.addEventListener('lock', function () {
+                blocker.style.display = 'none';
+                blocker.style.backgroundColor = 'rgba(0,0,0,0.8)'; 
+            });
+
+            controls.addEventListener('unlock', function () {
+                blocker.style.display = 'flex';
+                document.getElementById('title').innerText = "Velvet Rain";
+                document.getElementById('subtitle').innerText = "Click to Restart";
+            });
+
+            const onKeyDown = function (event) {
+                switch (event.code) {
+                    case 'ArrowUp': case 'KeyW': moveForward = true; break;
+                    case 'ArrowLeft': case 'KeyA': moveLeft = true; break;
+                    case 'ArrowDown': case 'KeyS': moveBackward = true; break;
+                    case 'ArrowRight': case 'KeyD': moveRight = true; break;
+                }
+            };
+
+            const onKeyUp = function (event) {
+                switch (event.code) {
+                    case 'ArrowUp': case 'KeyW': moveForward = false; break;
+                    case 'ArrowLeft': case 'KeyA': moveLeft = false; break;
+                    case 'ArrowDown': case 'KeyS': moveBackward = false; break;
+                    case 'ArrowRight': case 'KeyD': moveRight = false; break;
+                }
+            };
+
+            document.addEventListener('keydown', onKeyDown);
+            document.addEventListener('keyup', onKeyUp);
+
+            generateTerrain();
+            generateRain();
+            
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setPixelRatio(window.devicePixelRatio);
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.shadowMap.enabled = true;
+            renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+            document.body.appendChild(renderer.domElement);
+
+            window.addEventListener('resize', onWindowResize);
+        }
+
+        function resetGame() {
+            if (churchObject) {
+                scene.remove(churchObject);
+                churchObject = null;
+            }
+            churchSpawned = false;
+            gameStartTime = 0;
+            camera.position.set(0, 2, 0);
+            hemiLight.color.copy(defaultHemiColor);
+            hemiLight.intensity = 0.6;
+            // Clear red fog if it was stuck
+            scene.fog.color.copy(defaultFogColor);
+        }
+
+        function noise(x, z) {
+            const sin = Math.sin;
+            return sin(x * 0.01) + sin(z * 0.01) + sin(x * 0.05 + z * 0.05) * 0.5;
+        }
+
+        function getTerrainHeight(x, z) {
+            let y = noise(x, z) * 5; 
+            y += Math.sin(x * 0.1) * Math.cos(z * 0.1);
+            return Math.max(y, -2); 
+        }
+
+        function generateTerrain() {
+            const geometry = new THREE.PlaneGeometry(CONFIG.worldSize, CONFIG.worldSize, 256, 256);
+            geometry.rotateX(-Math.PI / 2);
+            const vertices = geometry.attributes.position.array;
+            const colors = [];
+            for (let i = 0; i < vertices.length; i += 3) {
+                const x = vertices[i];
+                const z = vertices[i + 2];
+                const y = getTerrainHeight(x, z);
+                vertices[i + 1] = y;
+                const color = new THREE.Color();
+                if (y > 3) color.setHex(0x1a1a1a); 
+                else if (y < -1) color.setHex(0x0d140d); 
+                else {
+                    const v = Math.random() * 0.1;
+                    color.setRGB(0.05 + v, 0.1 + v, 0.05 + v);
+                }
+                colors.push(color.r, color.g, color.b);
+            }
+            geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+            geometry.computeVertexNormals();
+            const material = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1, metalness: 0 });
+            const ground = new THREE.Mesh(geometry, material);
+            ground.receiveShadow = true;
+            scene.add(ground);
+            generateTrees(vertices);
+        }
+
+        function generateTrees(terrainVertices) {
+            const matA = new THREE.MeshStandardMaterial({ color: 0x050505, roughness: 1 });
+            const geoA = new THREE.ConeGeometry(0.8, 8, 6);
+            geoA.translate(0, 4, 0);
+            const matB = new THREE.MeshStandardMaterial({ color: 0x1a1210, roughness: 1 });
+            const geoB = new THREE.CylinderGeometry(0.1, 0.4, 5, 5);
+            geoB.translate(0, 2.5, 0);
+            
+            // Reduced count slightly to compensate for collision math overhead
+            const count = 15000; 
+            
+            const meshA = new THREE.InstancedMesh(geoA, matA, count);
+            const meshB = new THREE.InstancedMesh(geoB, matB, count);
+            const dummy = new THREE.Object3D();
+            let indexA = 0, indexB = 0;
+            for (let i = 0; i < count * 4; i++) {
+                const x = (Math.random() - 0.5) * CONFIG.worldSize;
+                const z = (Math.random() - 0.5) * CONFIG.worldSize;
+                if (Math.abs(x) < 40 && Math.abs(z) < 40) continue; // Safe zone
+                const y = getTerrainHeight(x, z);
+                dummy.position.set(x, y, z);
+                dummy.scale.setScalar((0.8 + Math.random() * 1.5) * 3); 
+                dummy.rotation.y = Math.random() * Math.PI;
+                dummy.updateMatrix();
+                
+                if (Math.random() > 0.5 && indexA < count) {
+                    meshA.setMatrixAt(indexA++, dummy.matrix);
+                    // Add Collision Data
+                    treeColliders.push({x: x, z: z, r: 1.5});
+                } 
+                else if (indexB < count) {
+                    meshB.setMatrixAt(indexB++, dummy.matrix);
+                    // Add Collision Data
+                    treeColliders.push({x: x, z: z, r: 1.0});
+                }
+            }
+            meshA.castShadow = true; meshA.receiveShadow = true;
+            meshB.castShadow = true; meshB.receiveShadow = true;
+            scene.add(meshA); scene.add(meshB);
+        }
+
+        function createRainTexture() {
+            const canvas = document.createElement('canvas');
+            canvas.width = 32; canvas.height = 64;
+            const context = canvas.getContext('2d');
+            context.fillStyle = '#aaaaaa';
+            context.beginPath();
+            context.ellipse(16, 32, 1, 20, 0, 0, Math.PI * 2);
+            context.fill();
+            const texture = new THREE.CanvasTexture(canvas);
+            return texture;
+        }
+
+        function generateRain() {
+            const geometry = new THREE.BufferGeometry();
+            const positions = [];
+            for (let i = 0; i < CONFIG.rainCount; i++) {
+                positions.push((Math.random() - 0.5) * 100); 
+                positions.push(Math.random() * 60);          
+                positions.push((Math.random() - 0.5) * 100); 
+            }
+            geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+            const material = new THREE.PointsMaterial({
+                color: 0xaaaaaa, size: 0.8, map: createRainTexture(),
+                transparent: true, opacity: 0.8, depthWrite: false, blending: THREE.AdditiveBlending
+            });
+            rainSystem = new THREE.Points(geometry, material);
+            scene.add(rainSystem);
+        }
+
+        function spawnChurch(playerPos, playerDir) {
+            if (churchSpawned) return;
+            churchSpawned = true;
+            const spawnDist = 40;
+            const spawnPos = new THREE.Vector3().copy(playerDir).multiplyScalar(spawnDist).add(playerPos);
+            spawnPos.y = getTerrainHeight(spawnPos.x, spawnPos.z);
+            
+            const churchGroup = new THREE.Group();
+            churchGroup.position.copy(spawnPos);
+            churchGroup.lookAt(playerPos.x, spawnPos.y, playerPos.z);
+            
+            const stoneMat = new THREE.MeshStandardMaterial({ color: 0x222222, roughness: 0.9 });
+            const windowMat = new THREE.MeshBasicMaterial({ color: 0x440000 }); 
+            const nave = new THREE.Mesh(new THREE.BoxGeometry(6, 8, 12), stoneMat);
+            nave.position.y = 4; churchGroup.add(nave);
+            const tower = new THREE.Mesh(new THREE.BoxGeometry(4, 16, 4), stoneMat);
+            tower.position.set(0, 8, -6); churchGroup.add(tower);
+            const spire = new THREE.Mesh(new THREE.ConeGeometry(2, 8, 4), stoneMat);
+            spire.position.set(0, 19, -6); churchGroup.add(spire);
+            const win = new THREE.Mesh(new THREE.PlaneGeometry(2, 4), windowMat);
+            win.position.set(0, 5, 6.1); win.rotation.y = Math.PI; churchGroup.add(win);
+            const winLight = new THREE.PointLight(0xff0000, 1, 10);
+            winLight.position.set(0, 5, 7); churchGroup.add(winLight);
+            
+            churchObject = churchGroup; 
+            scene.add(churchGroup);
+            
+            playDroneSound();
+            playCreepyPiano(); 
+
+            // Trigger Red "Psychic" Flash
+            flashIntensity = 5.0; 
+            isRedLightning = true; 
+        }
+
+        // --- Audio Synthesis ---
+        function initAudio() {
+            if (audioContext) return;
+            const AudioContext = window.AudioContext || window.webkitAudioContext;
+            audioContext = new AudioContext();
+            const bufferSize = 2 * audioContext.sampleRate;
+            const noiseBuffer = audioContext.createBuffer(1, bufferSize, audioContext.sampleRate);
+            const output = noiseBuffer.getChannelData(0);
+            let lastOut = 0; 
+            for (let i = 0; i < bufferSize; i++) {
+                const white = Math.random() * 2 - 1;
+                output[i] = (lastOut + (0.02 * white)) / 1.02;
+                lastOut = output[i];
+                output[i] *= 3.5; 
+            }
+            const rainSource = audioContext.createBufferSource();
+            rainSource.buffer = noiseBuffer;
+            rainSource.loop = true;
+            const rainFilter = audioContext.createBiquadFilter();
+            rainFilter.type = 'lowpass';
+            rainFilter.frequency.value = 800;
+            const rainGainNode = audioContext.createGain();
+            rainGainNode.gain.value = 0.15;
+            rainSource.connect(rainFilter);
+            rainFilter.connect(rainGainNode);
+            rainGainNode.connect(audioContext.destination);
+            rainSource.start();
+        }
+
+        function playStepSound() {
+            if (!audioContext) return;
+            const osc = audioContext.createOscillator();
+            const gain = audioContext.createGain();
+            osc.frequency.setValueAtTime(100 + Math.random() * 50, audioContext.currentTime);
+            gain.gain.setValueAtTime(0.1, audioContext.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.1);
+            osc.connect(gain);
+            gain.connect(audioContext.destination);
+            osc.start();
+            osc.stop(audioContext.currentTime + 0.1);
+        }
+
+        function playDroneSound() {
+            if (!audioContext) return;
+            const osc = audioContext.createOscillator();
+            const gain = audioContext.createGain();
+            osc.type = 'sawtooth';
+            osc.frequency.setValueAtTime(55, audioContext.currentTime); 
+            gain.gain.setValueAtTime(0, audioContext.currentTime);
+            gain.gain.linearRampToValueAtTime(0.1, audioContext.currentTime + 2);
+            gain.gain.linearRampToValueAtTime(0, audioContext.currentTime + 8);
+            osc.connect(gain);
+            gain.connect(audioContext.destination);
+            osc.start();
+            osc.stop(audioContext.currentTime + 8);
+        }
+
+        function playCreepyPiano() {
+            if (!audioContext) return;
+            const notes = [261.63, 370.00, 523.25];
+            const now = audioContext.currentTime;
+            notes.forEach((freq, i) => {
+                const osc = audioContext.createOscillator();
+                const gain = audioContext.createGain();
+                osc.type = 'triangle'; 
+                osc.frequency.setValueAtTime(freq, now + (i * 0.5)); 
+                osc.detune.value = (Math.random() - 0.5) * 50; 
+                gain.gain.setValueAtTime(0, now + (i * 0.5));
+                gain.gain.linearRampToValueAtTime(0.2, now + (i * 0.5) + 0.1);
+                gain.gain.exponentialRampToValueAtTime(0.001, now + (i * 0.5) + 4); 
+                osc.connect(gain);
+                gain.connect(audioContext.destination);
+                osc.start();
+                osc.stop(now + (i * 0.5) + 5);
+            });
+        }
+
+        function playThunder(type) {
+            if (!audioContext) return;
+            const bufferSize = audioContext.sampleRate * 3; 
+            const buffer = audioContext.createBuffer(1, bufferSize, audioContext.sampleRate);
+            const data = buffer.getChannelData(0);
+            for (let i = 0; i < bufferSize; i++) {
+                data[i] = Math.random() * 2 - 1;
+            }
+            const noise = audioContext.createBufferSource();
+            noise.buffer = buffer;
+            const filter = audioContext.createBiquadFilter();
+            filter.type = 'lowpass';
+            const gain = audioContext.createGain();
+
+            const now = audioContext.currentTime;
+
+            if (type === 'rumble') {
+                filter.frequency.setValueAtTime(400, now);
+                filter.frequency.linearRampToValueAtTime(50, now + 2.5);
+                gain.gain.setValueAtTime(0, now);
+                gain.gain.linearRampToValueAtTime(1.5, now + 0.2); 
+                gain.gain.exponentialRampToValueAtTime(0.01, now + 2.5);
+            } else if (type === 'crack') {
+                filter.frequency.setValueAtTime(1000, now);
+                filter.frequency.exponentialRampToValueAtTime(100, now + 1.0);
+                gain.gain.setValueAtTime(1.5, now);
+                gain.gain.exponentialRampToValueAtTime(0.01, now + 1.0);
+            } else {
+                filter.frequency.setValueAtTime(200, now);
+                filter.frequency.linearRampToValueAtTime(50, now + 2.0);
+                gain.gain.setValueAtTime(0, now);
+                gain.gain.linearRampToValueAtTime(0.6, now + 0.5); 
+                gain.gain.exponentialRampToValueAtTime(0.01, now + 3.0);
+            }
+
+            noise.connect(filter);
+            filter.connect(gain);
+            gain.connect(audioContext.destination);
+            noise.start();
+        }
+
+        function triggerLightning(now) {
+            flashIntensity = 3.0; 
+            lightningCounter++;
+            isRedLightning = (lightningCounter % 10 === 0);
+
+            const gap = 5 + Math.random() * 12; 
+            nextLightningTime = now + gap;
+
+            const roll = Math.random();
+            let soundType = 'rumble';
+            if (roll < 0.33) soundType = 'crack';
+            else if (roll < 0.66) soundType = 'distant';
+
+            setTimeout(() => {
+                playThunder(soundType);
+            }, 300 + Math.random() * 500);
+        }
+
+        function gameOver() {
+            controls.unlock();
+            const blocker = document.getElementById('blocker');
+            blocker.style.backgroundColor = 'black'; 
+            document.getElementById('title').innerText = "Game Over";
+            document.getElementById('subtitle').innerText = "You found it. Click to Try Again.";
+        }
+
+        // --- Main Loop ---
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+
+            const time = performance.now();
+            const delta = (time - prevTime) / 1000;
+            const currentTimeSeconds = time / 1000;
+            const elapsed = currentTimeSeconds - gameStartTime;
+
+            if (controls.isLocked) {
+                // Physics
+                velocity.x -= velocity.x * 10.0 * delta;
+                velocity.z -= velocity.z * 10.0 * delta;
+                velocity.y -= 9.8 * 100.0 * delta; 
+                direction.z = Number(moveForward) - Number(moveBackward);
+                direction.x = Number(moveRight) - Number(moveLeft);
+                direction.normalize();
+                if (moveForward || moveBackward) velocity.z -= direction.z * 40.0 * delta;
+                if (moveLeft || moveRight) velocity.x -= direction.x * 40.0 * delta;
+                
+                // Apply Movement
+                controls.moveRight(-velocity.x * delta);
+                controls.moveForward(-velocity.z * delta);
+
+                // --- NEW TREE COLLISION LOGIC ---
+                // We check every tree. If too close, push back.
+                const p = camera.position;
+                const playerRadius = 0.5;
+                
+                // Quick optimization: Only check trees if we are moving
+                if (velocity.x !== 0 || velocity.z !== 0) {
+                    for (let i = 0; i < treeColliders.length; i++) {
+                        const t = treeColliders[i];
+                        
+                        // Broad phase: Fast bounding box check (don't do math if far away)
+                        if (Math.abs(p.x - t.x) > 3) continue;
+                        if (Math.abs(p.z - t.z) > 3) continue;
+
+                        // Narrow phase: Circle distance check
+                        const dx = p.x - t.x;
+                        const dz = p.z - t.z;
+                        const distSq = dx*dx + dz*dz;
+                        const minDist = t.r + playerRadius;
+
+                        if (distSq < minDist * minDist) {
+                            // Collision detected. Push player out along the normal.
+                            const dist = Math.sqrt(distSq);
+                            const overlap = minDist - dist;
+                            
+                            // Normalize vector and push
+                            const pushX = dx / dist;
+                            const pushZ = dz / dist;
+                            
+                            p.x += pushX * overlap;
+                            p.z += pushZ * overlap;
+                        }
+                    }
+                }
+
+                // Terrain Height Adjustment
+                const floorY = getTerrainHeight(p.x, p.z);
+                const targetY = floorY + 2.0; 
+                p.y += (targetY - p.y) * 0.1;
+
+                if (moveForward || moveBackward || moveLeft || moveRight) {
+                     if (Math.sin(time * 0.01) > 0.9 && Math.random() > 0.8) playStepSound();
+                }
+
+                // Rain Animation
+                const positions = rainSystem.geometry.attributes.position.array;
+                for(let i=1; i<positions.length; i+=3) {
+                    positions[i] -= 0.8; 
+                    if (positions[i] < -20) positions[i] = 40;
+                }
+                rainSystem.geometry.attributes.position.needsUpdate = true;
+                rainSystem.position.copy(camera.position);
+                rainSystem.position.y -= 10; 
+
+                // --- LIGHTNING ---
+                if (currentTimeSeconds > nextLightningTime && nextLightningTime > 0) {
+                    triggerLightning(currentTimeSeconds);
+                }
+
+                // --- CHURCH COLLISION ---
+                if (churchSpawned && churchObject) {
+                    const dist = camera.position.distanceTo(churchObject.position);
+                    if (dist < 8) { 
+                        gameOver();
+                    }
+                }
+
+                if (flashIntensity > 0) {
+                    const intensityMult = 0.6 + flashIntensity;
+                    hemiLight.intensity = intensityMult;
+                    
+                    if (isRedLightning) {
+                        hemiLight.color.setHex(0xff0000);
+                        hemiLight.groundColor.setHex(0x330000);
+                        scene.fog.color.copy(defaultFogColor).lerp(new THREE.Color(0x550000), Math.min(flashIntensity, 1));
+                    } else {
+                        hemiLight.color.copy(defaultHemiColor).offsetHSL(0, 0, flashIntensity * 0.1);
+                        scene.fog.color.copy(defaultFogColor).lerp(new THREE.Color(0x444455), Math.min(flashIntensity, 1));
+                    }
+                    
+                    flashIntensity -= delta * 10; 
+                    if (flashIntensity <= 0) {
+                         flashIntensity = 0;
+                         hemiLight.intensity = 0.6;
+                         hemiLight.color.copy(defaultHemiColor);
+                         hemiLight.groundColor.copy(defaultGroundColor);
+                         scene.fog.color.copy(defaultFogColor);
+                    }
+                }
+
+                if (!churchSpawned && elapsed > CONFIG.churchTimer) {
+                    const dir = new THREE.Vector3();
+                    camera.getWorldDirection(dir);
+                    spawnChurch(camera.position, dir);
+                }
+            }
+
+            prevTime = time;
+            renderer.render(scene, camera);
+        }
+    </script>
+</body>
+</html>
